@@ -132,6 +132,7 @@ IF and ONLY IF there is a data payload error, the Slave will send an NAK signali
 This message allows the Master to set the time of the Slave, so that file operations can be properly recorded with the time.
 
 The Data is the Time:
+
 | Field | Size | Description |
 | ----- | ---- | ----------- |
 | DAY   | 1    | Day (1-31) |
@@ -165,6 +166,7 @@ If the format fails due to an error in the SPIFFS code, a NAK with a 0x24 FSERR 
 Indicates the 0x61 command completed successfully.  The reply contains the available SPIFFS size.
 
 The Data is the SPIFFS Size:
+
 | Field | Size | Description |
 | ----- | ---- | ----------- |
 | SIZE  | 4    | Size of the SPIFFS |
@@ -177,6 +179,7 @@ The Data is the SPIFFS Size:
 This instructs the Slave to return a list of ALL files on the SPIFFS.  The slave replies with a 0x72, Listing reply.  There is a single byte of data, so the data size is 1.
 
 The Data is:
+
 | Field | Size | Description |
 | ----- | ---- | ----------- |
 | OPT | 1   | Bit 0 = 0 -> No Time Requested. <br>Bit 0 = 1 -> File Time Requested <br> Bit 1 = 0 -> Adler-32 Checksum NOT Requested. <br>Bit 1 = 1 -> Adler-32 Checksum of each file Requested.<br>Bit 2-7 Ignored |
@@ -187,6 +190,7 @@ The Data is:
 This reply contains a full list of all files in the SPIFFS and relevant information about them.  The first fields specify global data about the SPIFFS, the following fields is a list of file entries.
 
 The Data is:
+
 | Field | Size | Description |
 | ----- | ---- | ----------- |
 | SIZE  | 4    | Size of the SPIFFS |
@@ -199,6 +203,7 @@ The Data is:
 | CHK2  | 4    | Checksum of all Data |
 
 The File fields are:
+
 | Field | Size | Description |
 | ----- | ---- | ----------- |
 | NAME | X | The Files Name, this is fixed length and always = NSIZ, if the filename is shorter, it is padded with NULL 0x00 bytes |
@@ -215,6 +220,7 @@ The DATE field has the exact same format as the fields in the Set Time message.
 Causes the file named in the data to be deleted.  The Slave will reply with a ACK, if the delete operation will take a significant amount of time, and will indicate how long the Master should wait before retrying or giving up.  Once the delete operation is complete, the Slave will reply with 0x73, Removed.  The Data is simply the file name to delete.  If the file does not exist, the Slave will reply with a NAK, and a FNOTF Error code.
 
 The Data is:
+
 | Field | Size | Description |
 | ----- | ---- | ----------- |
 | NAME  | X    | The Name of the File to delete, not padded |
@@ -225,6 +231,7 @@ The Data is:
 Reply to the Remove File command.  Data indicates the maximum and remaining space available if the SPIFFS.
 
 The Data is:
+
 | Field | Size | Description |
 | ----- | ---- | ----------- |
 | SIZE  | 4    | Size of the SPIFFS |
@@ -236,6 +243,7 @@ The Data is:
 Causes the file named in the data to be renamed to the second name in the data.  The Slave will reply with a ACK, if the rename operation will take a significant amount of time, and will indicate how long the Master should wait before retrying or giving up.  Once the rename operation is complete, the Slave will reply with 0x74, Renamed.  The Data is simply the file name to rename, and the new name.  If the file does not exist, the Slave will reply with a NAK, and a FNOTF Error code.  If the file to rename to already exists, it will not be over written and a NAK will reply with FEXISTS Error Code.
 
 The Data is:
+
 | Field | Size | Description |
 | ----- | ---- | ----------- |
 | NLEN  | 1    | The length of the File Name |
@@ -253,6 +261,7 @@ This message is sent in reply to 0x64 and contains no data.  Data size is 0.
 This message sends a file to the Slave, the Slave DOES NOT verify if this is the same as a previous file of the same name, and over-writes it if it exists,  It is the responsibility of the Master to ensure only necessary files are sent to be stored.  The data is the files name, its file time, and its data.
 
 The Data is:
+
 | Field | Size | Description |
 | ----- | ---- | ----------- |
 | NSIZ  | 1    | The Size of the File Name 1-255 |
@@ -270,6 +279,7 @@ To save buffering in RAM, the Slave will immediately start writing the file to a
 Reply to the File command.  Data indicates the maximum and remaining space available if the SPIFFS.
 
 The Data is:
+
 | Field | Size | Description |
 | ----- | ---- | ----------- |
 | SIZE  | 4    | Size of the SPIFFS |
