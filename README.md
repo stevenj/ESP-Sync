@@ -46,6 +46,7 @@ This message number starts at 0x20 and for each unique message sent increments t
 ### FUN - Function Code
 
 The Function of the message. Defines how the Size/Option bytes will be interpreted.
+
 | CODE | FUNCTION | Description |
 | ---- | -------- | ----------- |
 | 0x06 | ACK      | Optional, sent immediately after a valid header if processing may be slow. [OPT] |
