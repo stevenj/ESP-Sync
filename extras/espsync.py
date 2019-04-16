@@ -110,6 +110,7 @@ class ESPSynchComms:
         self._rxstate = 0
         self._checksum = 0
         self._thisMsg = None
+        self._rxdbuf = bytes()
 
     def setDebug(self):
         self._debug = True
@@ -148,7 +149,7 @@ class ESPSynchComms:
     def OPT_NAK(self, value):
         return (((value & 0xFF) << 16) | 0xA55A)
 
-    def TXHeader(self, fcode, size):
+    def TXHeader(self, fcode, size=0):
         header = self.CODES['STX'] + \
             self.TXCMN() + \
             self.CODES[fcode] + \
@@ -157,17 +158,20 @@ class ESPSynchComms:
         self._comm.write(header)
 
         if (self._debug):
-            print("TX: " + header.hex())
+            print("TX: ")
+            hexdump(header)
 
     def TXData(self, data):
         data = data + self.NBO32(adler32(data))
         self._comm.write(data)
         if (self._debug):
-            print("TX: " + data.hex)
+            print("TX: ")
+            hexdump(data)
 
     def RXFlush(self):
         # Flush Receive buffer
         self._comm.reset_input_buffer()
+        self._rxdbuf = bytes()
 
     def RXTimeout(self, ms):
         self._comm.timeout = float(ms) / 1000.0
@@ -315,12 +319,38 @@ class ESPSynchComms:
             self.RXSTATES[9] = GetChk2_8
             self.RXSTATES[9] = GetChk2_0
 
+        bcount = 0
         for byte in data:
+            bcount += 1
             byte = bytes([byte])
             self.RXSTATES[self._rxstate](byte)
-
+            if (self._completeMsg is not None):
+                break
+        bytesleft = data[bcount:]
         msg = self._completeMsg
         self._completeMsg = None
+
+        return (msg, bytesleft)
+
+    def getNextMessage(self, timeout):
+        msg = None
+        self.RXTimeout(timeout)
+
+        if (len(self._rxdbuf) == 0):
+            self._rxdbuf = self._comm.read(32)
+            if (self._debug):
+                if (len(self._rxdbuf) > 0):
+                    print('RX: ')
+                    hexdump(self._rxdbuf)
+
+        while ((len(self._rxdbuf) > 0) and msg is None):
+            msg, self._rxdbuf = self.RXMessage(self._rxdbuf)
+            if ((msg is None) and (len(self._rxdbuf) == 0)):
+                self._rxdbuf = self._comm.read(32)
+                if (self._debug):
+                    if (len(self._rxdbuf) > 0):
+                        print('RX: ')
+                        hexdump(self._rxdbuf)
 
         return msg
 
@@ -346,7 +376,27 @@ def CMD_mv(protocol, args):
 
 
 def CMD_format(protocol, args):
-    pass
+    print(
+        ("Formatting SPIFFS on ESP8266/32 at {}").format(
+            protocol._comm.name))
+
+    # Flush Receive buffer and protocol handler
+    protocol.RXFlush()
+    protocol.ResetRX()
+
+    # 250ms should be an eon in which to receive a reply to an ack.
+    protocol.RXTimeout(20)
+
+    protocol.TXHeader('CMD_FORMAT')
+
+    # 20ms should be an eon in which to receive a reply.
+    protocol.RXTimeout(20)
+
+    # Get a reply
+    # Should be an ACK/NAK or Formatted.  Anything else is an error
+
+    # IF it was an ack, wait for the specified duration for an
+    # Formatted reply, or a NAK.  Anything else is an error.
 
 
 def CMD_ping(protocol, args):
@@ -357,35 +407,27 @@ def CMD_ping(protocol, args):
         ("Pinging ESP8266/32 {} times on {}").format(
             args['-t'], protocol._comm.name))
 
-    # Flush Receive buffer
-    protocol.RXFlush()
-    # 250ms should be an eon in which to receive a reply to an ack.
-    protocol.RXTimeout(20)
-
-    # Send 10 Acks, wait for replies or timeout
-
+    # Send 10 (or whatever number) Acks, wait for replies or timeout
     for x in range(int(args['-t'])):
+        # Flush Receive buffer
+        protocol.RXFlush()
+        # Reset Receive state machine
         protocol.ResetRX()
 
         if (args['--verbose']):
             print("PING " + str(x+1))
         protocol.TXHeader('ACK', protocol.OPT_ACK(0))
 
-        data = bytes()
-        xdata = protocol._comm.read(32)
-        while (len(xdata) > 0):
-            data = data + xdata
-            xdata = protocol._comm.read(32)
-
-        if (args['--debug']):
-            print('RX: ')
-            hexdump(data)
-        msg = protocol.RXMessage(data)
+        msg = protocol.getNextMessage(20)
 
         if (msg is not None):
             if (msg['FUNC'] == protocol.CODES['ACK']):
                 success += 1
                 protocol.incCMN()
+            else:
+                if (args['--verbose']):
+                    print("UNEXPECTED REPLY '{}'".format(msg['FUNC']))
+                time.sleep(1)
         else:
             if (args['--verbose']):
                 print("NO REPLY")
