@@ -26,8 +26,31 @@ class ESPSync
         ESPSync(void);
 
         void setSerial(HardwareSerial *streamObject);
-        bool protocol_active(void);
+        /*
+         * Set the Hardware Serial port we are to use.
+         */
+
+        bool protocol_active(bool conservative = true);
+        /*
+         * Check if the protocol is active, or scanning.
+         * Conservative = true, means that the check only
+         * reports true if a valid header has been scanned.
+         * a non-conservative check reports true as soon as
+         * any start sentinel has been received, until scanning fails.
+         */
+
         bool ProcessByte(uint8_t byte);
+        /*
+         * Process a byte through the protocol handler.
+         * LOW LEVEL, use getData() in preference.
+         */
+
+        bool getData(uint8_t *byte);
+        /*
+         * Get the next byte from the serial stream, but
+         * process it first.  Filter any data which is identified
+         * as protocol data.
+         */
 
     private:
         HardwareSerial *_streamRef;
@@ -47,6 +70,7 @@ class ESPSync
         uint8_t  _chk_mode;
 
         uint8_t  *_dbuf;
+        bool     _active;
 
         void TX_Header(uint8_t func, uint32_t size_opt);
         void TX_NAK(uint8_t code);

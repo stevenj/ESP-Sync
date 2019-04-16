@@ -106,6 +106,68 @@
 /* Has to be big enough to hold largest small messages data*/
 #define TEMP_BUFFER_SIZE (70)
 
+
+class dQueue
+{
+    public:
+        dQueue(uint8_t size);
+        void put(uint8_t data);
+        bool any(void);
+        uint8_t get(void);
+        void flush(void);
+
+    private:
+        uint8_t pbsize;
+        uint8_t *pending_bytes;
+        uint8_t *pbnext;
+        uint8_t *pblast;
+
+        uint8_t* incpb(uint8_t* pb);
+};
+
+dQueue::dQueue(uint8_t size) 
+{
+    pbsize = size+1;
+    pending_bytes = new uint8_t[pbsize];
+    flush();
+}
+
+uint8_t *dQueue::incpb(uint8_t* pb)
+{
+    pb++;
+    if (pb >= &pending_bytes[pbsize]) {
+        pb = pending_bytes;
+    }
+    return pb;
+}
+
+void dQueue::put(uint8_t data)
+{
+    uint8_t* pbstep = incpb(pblast);
+    if (pbstep != pbnext) {
+        *pblast = data;
+        pblast = pbstep;
+    }
+}
+
+bool dQueue::any(void) {
+    return (pbnext != pblast);
+}
+
+uint8_t dQueue::get(void) {
+    uint8_t data = 0x00;
+    if (any()) {
+        data = *pbnext;
+        pbnext = incpb(pbnext);
+    }
+    return data;
+}
+
+void dQueue::flush(void) {
+    pbnext = pblast = pending_bytes;
+}
+
+
 ESPSync::ESPSync(void)
 {
     _streamRef = NULL;
@@ -137,15 +199,27 @@ void ESPSync::setSerial(HardwareSerial *streamObject)
 /**
  * Has the handler captured the Serial port
  */
-bool ESPSync::protocol_active(void)
+bool ESPSync::protocol_active(bool conservative)
 {
-    return false;
+    // When Conservative is true, we only signal the protocol
+    // is active when we know the header is valid.  otherwise
+    // we signal the protocol is active if we get any STX
+    bool active = _active;
+
+    if (conservative) {
+        if (_rxstate < RXSTATE_WAIT_CHK_LO) {
+            _active = false;
+        }
+    } else {
+        active = _rxstate != RXSTATE_WAIT_STX;
+    }
+    return active;
 }
 
 void fletcher16(uint16_t* csum, uint8_t byte) {
     uint8_t sum1 = (*csum) + byte;
     uint8_t sum2 = ((*csum) >> 8) + sum1;
-    *csum = (sum2 << 8) || sum1;
+    *csum = (sum2 << 8) | sum1;
 }
 
 void adler32(uint16_t* csum_hi, uint16_t* csum_lo, uint8_t byte) {
@@ -157,8 +231,8 @@ void adler32(uint16_t* csum_hi, uint16_t* csum_lo, uint8_t byte) {
 }
 
 void adler32(uint32_t *csum, uint8_t byte) {
-    uint16_t csum_lo;
-    uint16_t csum_hi;
+    uint16_t csum_lo = (*csum & 0xFFFF);
+    uint16_t csum_hi = (*csum >> 16);
     adler32(&csum_hi, &csum_lo, byte);
     *csum = (csum_hi << 16) | csum_lo;
 }
@@ -357,7 +431,6 @@ void ESPSync::PROCESS_Listing(void) {
 void ESPSync::PROCESS_Remove(void) {
     FSInfo fs_info;
     uint8_t nlen = _dbuf[0];
-    uint8_t rlen = _dbuf[nlen+1];
 
     if (!SPIFFS.begin()) {
         TX_NAK(NAK_FSERR);
@@ -366,7 +439,7 @@ void ESPSync::PROCESS_Remove(void) {
 
     /* Turn the names in the buffer into C strings. */
     _dbuf[nlen+1] = 0x00;
-    _dbuf[_this_size-2] = 0x00;
+    _dbuf[_this_size-4] = 0x00;
 
     if (SPIFFS.exists((char*)(_dbuf+1))) {
         if (SPIFFS.remove((char*)_dbuf)) {
@@ -389,7 +462,6 @@ void ESPSync::PROCESS_Remove(void) {
 void ESPSync::PROCESS_Rename(void) {
     FSInfo fs_info;
     uint8_t nlen = _dbuf[0];
-    uint8_t rlen = _dbuf[nlen+1];
 
     if (!SPIFFS.begin()) {
         TX_NAK(NAK_FSERR);
@@ -398,7 +470,7 @@ void ESPSync::PROCESS_Rename(void) {
 
     /* Turn the names in the buffer into C strings. */
     _dbuf[nlen+1] = 0x00;
-    _dbuf[_this_size-2] = 0x00;
+    _dbuf[_this_size-4] = 0x00;
 
     if (!SPIFFS.exists((char*)(_dbuf+1))) {
         TX_NAK(NAK_FNOTF);
@@ -441,7 +513,6 @@ void ESPSync::PROCESS_FileRX(void) {
 
     uint32_t csum;
     uint32_t rx_size = 0;
-    uint32_t last_rx_size;
  
     uint8_t nsiz;
 
@@ -470,7 +541,7 @@ void ESPSync::PROCESS_FileRX(void) {
         /* Get File Name and Date */
         if (rx_error == ACK) {
             rxd = _streamRef->readBytes(_dbuf,nsiz+6);
-            if (rxd != nsiz+6) {
+            if (rxd != (uint32_t)nsiz+6) {
                 rx_error = NAK_TIMEOUT;
             }
         }
@@ -478,7 +549,7 @@ void ESPSync::PROCESS_FileRX(void) {
         /* Read and store File Data */
         while ((rx_error == ACK) && (rx_size < _this_size - 4)) {
             uint16_t rxbufsize = fs_info.pageSize;
-            if (rx_size + fs_info.pageSize > _this_size ) {
+            if (rx_size + (uint32_t)fs_info.pageSize > _this_size ) {
                 rxbufsize = _this_size - rx_size;
             }
             rxd = _streamRef->readBytes(fbuffer,rxbufsize);
@@ -636,10 +707,11 @@ bool ESPSync::ProcessByte(uint8_t byte)
 
         switch (_rxstate) {
             case RXSTATE_WAIT_STX:
-                if (input == STX)
+                if (input == STX) {
                     _rxstate++;
-                    _csum_lo = 0x0202; // Preload Checksum with STX Values
+                    _csum_hi = 0x0202; // Preload Checksum with STX Values
                     _chk_mode = CSUM_FLETCHER16;
+                }
                 break;
 
             case RXSTATE_WAIT_CMN:
@@ -690,6 +762,7 @@ bool ESPSync::ProcessByte(uint8_t byte)
 
             case RXSTATE_WAIT_CHK_LO:
                 if (input == (_csum_hi & 0xFF)) {
+                    _active = true; /* Protocol now active */
                     _csum_hi = 0;
                     _csum_lo = 0;
 
@@ -798,4 +871,41 @@ bool ESPSync::ProcessByte(uint8_t byte)
 
     return true;
 
+}
+
+bool ESPSync::getData(uint8_t *data) 
+{
+    bool ok = false;
+    uint8_t rxd;
+
+    static dQueue dq(8);
+
+    // Check if we filtered any bytes, but didn't get a header.
+    if ((dq.any()) && !protocol_active(false)) {
+        *data = dq.get();
+        ok = true;
+    } else {
+        if (_streamRef->available() > 0) {
+            rxd = _streamRef->read();
+            ProcessByte(rxd);
+            // If a conservative active protocol check is true,
+            // filter all bytes.
+            if (protocol_active()) {
+                // Flush pending byte buffer
+                dq.flush();
+            } else {
+                // If a lax active protocol check is true,
+                // Or we have already buffered some data
+                // buffer bytes in temp buffer.
+                if (protocol_active(false) || dq.any()) {
+                    dq.put(rxd);
+                } else {
+                    // Otherwise, just return the byte
+                    *data = rxd;
+                    ok = true;
+                }
+            }
+        }
+    }
+    return ok;
 }
