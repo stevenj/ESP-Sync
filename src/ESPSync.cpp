@@ -107,6 +107,8 @@
 #define TEMP_BUFFER_SIZE (70)
 
 
+#define DURATION_FORMAT (10)  /* 10 Seconds per megabyte */
+
 class dQueue
 {
     public:
@@ -333,21 +335,30 @@ void ESPSync::PROCESS_SetTime(void) {
 }
         
 void ESPSync::PROCESS_Format(void) {
+    FSInfo fs_info;
 
     if (SPIFFS.begin()) {
-        // Reply with ACK specifying expected format duration
-        TX_ACK(30*1000); //Todo: Benchmark format time
 
-        // Format the SPIFFS
-        SPIFFS.format();
+        // If last command was a format, just ACK.
+        if (!MSG_Retransmit()) {
+            SPIFFS.info(fs_info);
+            
+            // Reply with ACK specifying expected format duration
+            // Duration is calculated based on benchmarked format Speed 
+            // per megabyte (rounded up)
+            TX_ACK(DURATION_FORMAT * ((fs_info.totalBytes / (1048576))+1));
 
-        // Reply with a 0x71 message when finished.
-        FSInfo fs_info;
+            // Format the SPIFFS
+            SPIFFS.format();
+        }
+
         SPIFFS.info(fs_info);
+        // Reply with a 0x71 message when finished.
         NBO32(_dbuf, fs_info.totalBytes); 
         NBO32(_dbuf+4, fs_info.usedBytes);
         NBO8(_dbuf+8, fs_info.maxPathLength);
         TX_DataBuf(RPL_FORMATED, 9);
+        MSG_Complete();
     } else {
         TX_NAK(NAK_FSERR);
     }
@@ -665,7 +676,15 @@ void ESPSync::PROCESS_FileRX(void) {
 }
 
 void ESPSync::MSG_Complete(void) {
+    _prev_cmn = _this_cmn;
+    _prev_fun = _this_fun;
+    _prev_size = _this_size;
+}
 
+bool ESPSync::MSG_Retransmit(void) {
+    return ((_prev_cmn == _this_cmn) &&
+            (_prev_fun == _this_fun) &&
+            (_prev_size == _this_size));
 }
 
 bool CheckMessageSizes(uint8_t func, uint32_t size) {

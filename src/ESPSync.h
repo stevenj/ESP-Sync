@@ -88,6 +88,7 @@ class ESPSync
         void PROCESS_FileRX(void);
 
         void MSG_Complete(void);
+        bool MSG_Retransmit(void);
 
 };
 
